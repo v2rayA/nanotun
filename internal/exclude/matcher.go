@@ -39,7 +39,11 @@ func New(targets []string, interval time.Duration, log *slog.Logger) *Matcher {
 		pidNames:  make(map[int32]string),
 	}
 	for _, name := range targets {
-		m.targets[strings.ToLower(name)] = struct{}{}
+		clean := normalizeProcessName(name)
+		if clean == "" {
+			continue
+		}
+		m.targets[clean] = struct{}{}
 	}
 	if m.interval <= 0 {
 		m.interval = 15 * time.Second
@@ -68,11 +72,11 @@ func (m *Matcher) ShouldSkip(md *M.Metadata) bool {
 	if pid == 0 {
 		return false
 	}
-	name := m.lookupName(pid)
+	name := normalizeProcessName(m.lookupName(pid))
 	if name == "" {
 		return false
 	}
-	_, skip := m.targets[strings.ToLower(name)]
+	_, skip := m.targets[name]
 	return skip
 }
 
@@ -154,7 +158,7 @@ func (m *Matcher) resolveProcessNames(ctx context.Context, pids map[int32]struct
 		if err != nil {
 			continue
 		}
-		names[pid] = strings.ToLower(name)
+		names[pid] = normalizeProcessName(name)
 	}
 	return names
 }
@@ -183,4 +187,12 @@ func networkForKind(kind string) M.Network {
 		return M.UDP
 	}
 	return M.TCP
+}
+
+func normalizeProcessName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if strings.HasSuffix(name, ".exe") {
+		name = strings.TrimSuffix(name, ".exe")
+	}
+	return name
 }
