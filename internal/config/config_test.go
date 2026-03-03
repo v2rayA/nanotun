@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/v2rayA/nanotun/internal/procname"
+)
 
 func TestNormalizeProcessListStripsExeAndDeduplicates(t *testing.T) {
 	input := []string{"Shadowsocks.exe", "shadowsocks", "  Shadowsocks.EXE "}
@@ -15,7 +19,7 @@ func TestNormalizeProcessListStripsExeAndDeduplicates(t *testing.T) {
 }
 
 func TestNormalizeProcessNameTrimsWhitespace(t *testing.T) {
-	if normalizeProcessName("  Example.EXE ") != "example" {
+	if procname.Normalize("  Example.EXE ") != "example" {
 		t.Fatalf("expected whitespace and suffix trimmed")
 	}
 }
