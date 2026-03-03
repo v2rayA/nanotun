@@ -27,6 +27,7 @@ type Config struct {
 	StackMode         string        `yaml:"stackMode" json:"stackMode"`
 	Proxy             string        `yaml:"proxy" json:"proxy"`
 	DNSServer         string        `yaml:"dnsServer" json:"dnsServer"`
+	UpstreamDNS       string        `yaml:"upstreamDNS" json:"upstreamDNS"`
 	UDPTimeout        time.Duration `yaml:"udpTimeout" json:"udpTimeout"`
 	ExcludedProcesses []string      `yaml:"excludedProcesses" json:"excludedProcesses"`
 	ExcludeRefresh    time.Duration `yaml:"excludeRefresh" json:"excludeRefresh"`
@@ -35,12 +36,15 @@ type Config struct {
 
 // Runtime includes the validated form of Config together with derived values.
 type Runtime struct {
-	TunName           string
-	MTU               int
-	StackMode         StackMode
-	Proxy             string
-	DNSAddr           netip.AddrPort
-	HasDNSOverride    bool
+	TunName        string
+	MTU            int
+	StackMode      StackMode
+	Proxy          string
+	DNSAddr        netip.AddrPort
+	HasDNSOverride bool
+	// UpstreamDNS is where the built-in gateway DNS relay forwards queries.
+	// Defaults to 8.8.8.8:53 when not configured by the user.
+	UpstreamDNS       netip.AddrPort
 	UDPTimeout        time.Duration
 	ExcludedProcesses []string
 	ExcludeRefresh    time.Duration
@@ -91,6 +95,9 @@ func (c *Config) Merge(override Config) {
 	}
 	if override.DNSServer != "" {
 		c.DNSServer = override.DNSServer
+	}
+	if override.UpstreamDNS != "" {
+		c.UpstreamDNS = override.UpstreamDNS
 	}
 	if override.UDPTimeout != 0 {
 		c.UDPTimeout = override.UDPTimeout
@@ -148,6 +155,17 @@ func (c Config) Finalize() (Runtime, error) {
 		}
 		run.DNSAddr = addr
 		run.HasDNSOverride = true
+	}
+
+	// Upstream DNS for the built-in gateway relay.
+	if strings.TrimSpace(base.UpstreamDNS) != "" {
+		addr, err := parseAddrPort(base.UpstreamDNS)
+		if err != nil {
+			return Runtime{}, fmt.Errorf("upstreamDNS: %w", err)
+		}
+		run.UpstreamDNS = addr
+	} else {
+		run.UpstreamDNS = netip.MustParseAddrPort("8.8.8.8:53")
 	}
 
 	return run, nil

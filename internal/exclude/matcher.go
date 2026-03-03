@@ -132,9 +132,7 @@ func (m *Matcher) scanOnce(ctx context.Context) {
 
 	m.mu.Lock()
 	m.flowToPID = nextFlow
-	for pid, name := range names {
-		m.pidNames[pid] = name
-	}
+	m.pidNames = names // replace entirely to evict stale PIDs (prevents unbounded growth)
 	m.mu.Unlock()
 }
 

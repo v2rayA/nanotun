@@ -2,6 +2,15 @@
 # All fields are optional unless noted; shown values are the defaults.
 
 # ── TUN interface ────────────────────────────────────────────────────────────
+# nanotun automatically assigns these addresses to the TUN device.
+# They are fixed and not user-configurable:
+#   IPv4 gateway / DNS : 198.18.0.1   (subnet 198.18.0.0/30)
+#   IPv6 gateway / DNS : fdfe:dcba:9876::1  (subnet fdfe:dcba:9876::/126)
+#
+# To route all traffic through nanotun, add default routes via these gateways
+# after nanotun is running.  Example (Linux):
+#   ip route add default via 198.18.0.1 dev nano0
+#   ip -6 route add default via fdfe:dcba:9876::1 dev nano0
 
 # Name of the TUN device created by nanotun.
 tunName: nano0
@@ -34,6 +43,13 @@ proxy: socks5://127.0.0.1:1080
 # Leave blank (or remove) to pass DNS through the proxy unchanged.
 # Port is optional and defaults to 53.
 dnsServer: ""
+
+# Upstream DNS server used by nanotun's built-in DNS relay.
+# nanotun listens for DNS queries on the virtual gateway address
+# (198.18.0.1 / fdfe:dcba:9876::1) and forwards them here.
+# Configure your OS to use 198.18.0.1 as the system DNS resolver.
+# Port is optional and defaults to 53.
+upstreamDNS: 8.8.8.8
 
 # ── UDP ──────────────────────────────────────────────────────────────────────
 

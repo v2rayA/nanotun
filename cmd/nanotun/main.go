@@ -41,6 +41,7 @@ func loadRuntimeConfig() (config.Runtime, error) {
 	stackMode := fs.String("stack", "", "Stack mode: gvisor | simple")
 	proxyAddr := fs.String("proxy", "", "Proxy address, e.g. socks5://127.0.0.1:1080")
 	dnsOverride := fs.String("dns", "", "Optional DNS server override (host or host:port)")
+	upstreamDNS := fs.String("upstream-dns", "", "Upstream DNS for the gateway relay (host or host:port, default 8.8.8.8:53)")
 	udpTimeout := fs.Duration("udp-timeout", 0, "UDP session timeout")
 	excludeProcesses := fs.StringArray("exclude", nil, "Process name to bypass; repeatable")
 	excludeRefresh := fs.Duration("exclude-refresh", 0, "Process table refresh interval")
@@ -70,6 +71,9 @@ func loadRuntimeConfig() (config.Runtime, error) {
 	}
 	if fs.Changed("dns") {
 		overrides.DNSServer = *dnsOverride
+	}
+	if fs.Changed("upstream-dns") {
+		overrides.UpstreamDNS = *upstreamDNS
 	}
 	if fs.Changed("udp-timeout") {
 		overrides.UDPTimeout = *udpTimeout

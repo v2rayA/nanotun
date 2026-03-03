@@ -16,6 +16,8 @@ import (
 	"gvisor.dev/gvisor/pkg/waiter"
 
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
+
+	"github.com/v2rayA/nanotun/internal/netaddr"
 )
 
 const (
@@ -43,11 +45,20 @@ func buildStack(ep stack.LinkEndpoint, handler adapter.TransportHandler, enableI
 
 	nicID := s.NextNICID()
 	if err := s.CreateNIC(nicID, ep); err != nil {
-		return nil, fmt.Errorf("create nic: %w", err)
+		return nil, fmt.Errorf("create nic: %s", err)
 	}
 	if err := s.SetPromiscuousMode(nicID, true); err != nil {
-		return nil, fmt.Errorf("promiscuous: %w", err)
+		return nil, fmt.Errorf("promiscuous: %s", err)
 	}
+	// Spoofing allows the stack to send packets from addresses not explicitly
+	// bound to the NIC (required for proxying all traffic in promiscuous mode).
+	if err := s.SetSpoofing(nicID, true); err != nil {
+		return nil, fmt.Errorf("spoofing: %s", err)
+	}
+
+	// Bind gateway addresses so that gVisor automatically answers ICMP echo
+	// requests directed at the virtual gateway IP.
+	addGatewayAddresses(s, nicID, enableIPv6)
 
 	routes := []tcpip.Route{{Destination: header.IPv4EmptySubnet, NIC: nicID}}
 	if enableIPv6 {
@@ -59,6 +70,27 @@ func buildStack(ep stack.LinkEndpoint, handler adapter.TransportHandler, enableI
 	registerUDPForwarder(s, handler)
 
 	return s, nil
+}
+
+// addGatewayAddresses binds the well-known virtual gateway IPs to the NIC.
+func addGatewayAddresses(s *stack.Stack, nicID tcpip.NICID, enableIPv6 bool) {
+	_ = s.AddProtocolAddress(nicID, tcpip.ProtocolAddress{
+		Protocol: ipv4.ProtocolNumber,
+		AddressWithPrefix: tcpip.AddressWithPrefix{
+			Address:   tcpip.AddrFrom4(netaddr.GatewayIPv4.As4()),
+			PrefixLen: netaddr.PrefixIPv4.Bits(),
+		},
+	}, stack.AddressProperties{})
+
+	if enableIPv6 {
+		_ = s.AddProtocolAddress(nicID, tcpip.ProtocolAddress{
+			Protocol: ipv6.ProtocolNumber,
+			AddressWithPrefix: tcpip.AddressWithPrefix{
+				Address:   tcpip.AddrFrom16(netaddr.GatewayIPv6.As16()),
+				PrefixLen: netaddr.PrefixIPv6.Bits(),
+			},
+		}, stack.AddressProperties{})
+	}
 }
 
 func registerTCPForwarder(s *stack.Stack, handler adapter.TransportHandler) {

@@ -4,7 +4,10 @@ nano-tun is a lightweight tun2socks-style forwarder written in Go. It keeps the 
 
 ## Features
 - Dual packet engines (gVisor and simplified gVisor-based stack) selectable per run.
-- Mandatory upstream proxy with optional DNS override for UDP/53.
+- **Virtual gateway addresses** auto-assigned to the TUN device; no manual `ip addr` required.
+- **Built-in DNS relay** running on the virtual gateway IP — point your OS DNS at `198.18.0.1` and nanotun forwards queries to a configurable upstream resolver.
+- Responds to **ICMP echo (ping)** directed at the gateway address.
+- Mandatory upstream proxy with optional DNS-override for proxied UDP/53 flows.
 - Process-based exclusion list that bypasses the proxy for selected executables.
 - Configurable UDP session timeout, MTU, and TUN device name across platforms.
 - YAML configuration merged with CLI flags for reproducible deployments.
@@ -24,25 +27,45 @@ go build ./cmd/nanotun
 ```
 The `go mod tidy` step pulls all referenced libraries (tun2socks core, gVisor, gopsutil, etc.).
 
+## Network Layout
+
+nanotun automatically programs the following addresses on the TUN device at startup:
+
+| Family | Subnet | Gateway / DNS listener |
+|--------|--------|------------------------|
+| IPv4 | `198.18.0.0/30` | `198.18.0.1` |
+| IPv6 | `fdfe:dcba:9876::/126` | `fdfe:dcba:9876::1` |
+
+Both addresses are fixed. After nanotun starts:
+
+1. Add default routes into the TUN device so traffic enters the tunnel:
+   ```bash
+   # Linux
+   ip route add default via 198.18.0.1 dev nano0
+   ip -6 route add default via fdfe:dcba:9876::1 dev nano0
+   ```
+2. Point your system DNS resolver at the gateway so nanotun can relay queries:
+   ```bash
+   # Linux (systemd-resolved or /etc/resolv.conf)
+   echo "nameserver 198.18.0.1" | sudo tee /etc/resolv.conf
+   ```
+
 ## Quick Start
-1. Create a configuration file:
+1. Create a configuration file (or copy `config.example.yaml`):
    ```yaml
    tunName: nano0
    mtu: 1500
-   stackMode: simple
+   stackMode: gvisor
    proxy: socks5://127.0.0.1:1080
-   dnsServer: 1.1.1.1
+   upstreamDNS: 8.8.8.8   # where nanotun forwards DNS queries from the OS
    udpTimeout: 1m
-   excludedProcesses:
-     - chrome.exe
-   excludeRefresh: 10s
    logLevel: info
    ```
-2. Start the daemon:
+2. Start the daemon (root required for TUN creation and interface configuration):
    ```bash
    sudo ./nanotun --config ./nanotun.yaml
    ```
-3. Configure your OS routing rules to direct the desired subnets into the `tunName` device.
+3. Configure default routes and DNS as shown in [Network Layout](#network-layout).
 
 ## CLI Flags
 `cmd/nanotun` exposes the following switches (all optional when covered by the YAML config):
@@ -54,7 +77,8 @@ The `go mod tidy` step pulls all referenced libraries (tun2socks core, gVisor, g
 | `--mtu` | Override MTU value. |
 | `--stack` | `gvisor` or `simple`. |
 | `--proxy` | Upstream proxy URL (e.g., `socks5://127.0.0.1:1080`). |
-| `--dns` | DNS override target (`host` or `host:port`). Applied only to UDP/53. |
+| `--dns` | DNS override for proxied flows (`host` or `host:port`). Applied only to UDP/53 traffic already inside the tunnel. |
+| `--upstream-dns` | Upstream resolver for the built-in DNS relay (default `8.8.8.8:53`). |
 | `--udp-timeout` | Duration before idle UDP flows are closed. |
 | `--exclude` | Process name to bypass (repeatable). |
 | `--exclude-refresh` | Interval for refreshing the process table. |
@@ -64,35 +88,57 @@ CLI values always override YAML fields. See [cmd/nanotun/main.go](cmd/nanotun/ma
 
 ## Configuration Reference
 The YAML schema handled by [internal/config/config.go](internal/config/config.go) understands:
-- `tunName`: Name of the TUN interface to open (default `nano0`).
-- `mtu`: MTU to program on the device (default `1500`).
-- `stackMode`: `gvisor` for the full netstack, `simple` for the trimmed driver.
-- `proxy`: Required upstream proxy URL (SOCKS5/HTTP supported by tun2socks core).
-- `dnsServer`: Optional DNS override in `host` or `host:port` form (defaults to port 53).
-- `udpTimeout`: Idle timeout for UDP sessions (default `1m`).
-- `excludedProcesses`: Lower-cased executables that should never transit the proxy.
-- `excludeRefresh`: Scan interval for process table refresh (default `15s`).
-- `logLevel`: `debug`/`info`/`warn`/`error` for slog.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `tunName` | `nano0` | Name of the TUN interface to open. |
+| `mtu` | `1500` | MTU to program on the device. |
+| `stackMode` | `gvisor` | `gvisor` for the full netstack, `simple` for the trimmed driver. |
+| `proxy` | *(required)* | Upstream proxy URL. Supported schemes: `socks5://`, `socks5h://`, `socks4://`, `http://`, `direct://`, `reject://`. |
+| `dnsServer` | *(empty)* | Redirect DNS queries **inside the tunnel** to this server (prevents DNS leaks). Distinct from `upstreamDNS` — see below. |
+| `upstreamDNS` | `8.8.8.8:53` | Upstream resolver for the **built-in DNS relay** that listens on the gateway IP. Does not go through the proxy. |
+| `udpTimeout` | `1m` | Idle timeout for UDP sessions. |
+| `excludedProcesses` | *(none)* | Lower-cased executables that should never transit the proxy. |
+| `excludeRefresh` | `15s` | Scan interval for process table refresh. |
+| `logLevel` | `info` | `debug` / `info` / `warn` / `error`. |
+
+### `dnsServer` vs `upstreamDNS`
+
+These two fields operate at different layers:
+
+- **`upstreamDNS`** — serves the OS. nanotun's gateway relay receives DNS queries sent to `198.18.0.1:53` and forwards them to this server using the **host's native network** (not through the proxy). Use this to give your system a working resolver.
+- **`dnsServer`** — rewrites the destination of DNS packets **already inside the tunnel**. Traffic is still forwarded through the proxy, just redirected to a different server. Use this to prevent DNS leaks or force all lookups through a specific remote resolver.
+
+Both can be set simultaneously.
+
+## Built-in Gateway
+nanotun runs a virtual gateway on the TUN interface's first address:
+
+- **ICMP echo (ping)** to `198.18.0.1` / `fdfe:dcba:9876::1` is answered by the gVisor stack — useful for confirming the tunnel is alive.
+- **DNS relay** on UDP port 53 of the gateway address forwards queries to `upstreamDNS` via the host OS network (bypassing the proxy), then returns the response into the tunnel.
+- **TCP** to the gateway address is silently dropped (no service listens there).
 
 ## Process Exclusion
-The exclusion subsystem ([internal/exclude/matcher.go](internal/exclude/matcher.go)) periodically maps active flows back to process names using `gopsutil`. Any matching process causes the flow to be rejected before it hits the proxy, allowing split tunneling per application. The `--exclude` flag accepts multiple values and is case-insensitive.
+The exclusion subsystem ([internal/exclude/matcher.go](internal/exclude/matcher.go)) periodically maps active flows back to process names using `gopsutil`. Any matching process causes the flow to be rejected before it hits the proxy, enabling per-application split tunneling. The process table is refreshed on a timer and the in-memory cache is **fully replaced** each cycle to prevent stale-PID accumulation.
+
+The `--exclude` flag accepts multiple values and is case-insensitive. The `.exe` suffix is ignored on Windows.
 
 ## Stack Modes
 - **gVisor** ([internal/stack/gvisor/driver.go](internal/stack/gvisor/driver.go)) uses the `tun2socks` `core` package and mirrors the behavior of upstream implementations. Choose this for maximum protocol coverage.
-- **Simple** ([internal/stack/simple](internal/stack/simple)) builds a trimmed stack directly with gVisor primitives, registers TCP/UDP forwarders, and keeps optional IPv6 support. It avoids extra layers for reduced overhead but sacrifices some advanced features.
+- **Simple** ([internal/stack/simple](internal/stack/simple)) builds a trimmed stack directly with gVisor primitives, registers TCP/UDP forwarders, and keeps optional IPv6 support. Promiscuous mode and spoofing are both enabled so the stack can receive and respond on behalf of arbitrary source addresses inside the tunnel.
 
 Switch between stacks with `--stack gvisor` or `--stack simple` (or via `stackMode` in YAML).
 
 ## Development Tips
 - Run `go test ./...` during development (ensure dependencies are downloaded first).
-- Use `LOG_LEVEL=debug` or `--log-level debug` to inspect flow-level events.
-- The tunnel driver expects you to manage OS routes and DNS settings externally.
+- Use `--log-level debug` to inspect per-flow events.
+- The clean-shutdown timeout for active connections is 2 seconds; the process will always exit promptly after SIGINT/SIGTERM.
 
 ## Referenced Projects & Licenses
 | Project | Purpose | License |
 | --- | --- | --- |
 | [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) | Core tunnel, proxy adapters, statistics | MIT |
-| [gVisor](https://github.com/google/gvisor) | Network stack primitives for the simple driver | Apache-2.0 |
+| [gVisor](https://github.com/google/gvisor) | Network stack primitives | Apache-2.0 |
 | [gopsutil](https://github.com/shirou/gopsutil) | Process and connection inspection for exclusions | BSD-3-Clause |
 | [spf13/pflag](https://github.com/spf13/pflag) | POSIX/GNU-style CLI flag parsing | BSD-3-Clause |
 | [go-yaml/yaml](https://github.com/go-yaml/yaml) | YAML parsing for configuration files | Apache-2.0 |

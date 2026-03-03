@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/tun"
+
+	"github.com/v2rayA/nanotun/internal/netaddr"
+	"github.com/v2rayA/nanotun/internal/tunconf"
 )
 
 // Options controls the lightweight stack.
@@ -42,18 +46,37 @@ func (d *Driver) Run(ctx context.Context) error {
 	}
 	defer dev.Close()
 
-	stack, err := buildStack(dev, d.opts.Handler, d.opts.EnableIPv6)
+	if err := tunconf.Configure(dev.Name()); err != nil {
+		return fmt.Errorf("configure tun: %w", err)
+	}
+
+	s, err := buildStack(dev, d.opts.Handler, d.opts.EnableIPv6)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		stack.Close()
-		stack.Wait()
+		s.Close()
+		waitWithTimeout(s, 2*time.Second)
 	}()
 
-	d.opts.Logger.Info("simple backend ready", "device", dev.Name(), "mtu", d.opts.MTU, "ipv6", d.opts.EnableIPv6)
+	d.opts.Logger.Info("simple backend ready",
+		"device", dev.Name(), "mtu", d.opts.MTU, "ipv6", d.opts.EnableIPv6,
+		"gateway4", netaddr.GatewayIPv4,
+		"gateway6", netaddr.GatewayIPv6,
+	)
 
 	<-ctx.Done()
 	d.opts.Logger.Info("simple backend stopping")
 	return ctx.Err()
+}
+
+// waitWithTimeout calls s.Wait() but gives up after the given duration so that
+// long-lived proxy connections do not block clean shutdown.
+func waitWithTimeout(s interface{ Wait() }, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() { s.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
 }

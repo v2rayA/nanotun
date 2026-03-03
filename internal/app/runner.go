@@ -13,10 +13,13 @@ import (
 
 	"github.com/v2rayA/nanotun/internal/config"
 	"github.com/v2rayA/nanotun/internal/exclude"
+	"github.com/v2rayA/nanotun/internal/gateway"
 	"github.com/v2rayA/nanotun/internal/proxychain"
 	"github.com/v2rayA/nanotun/internal/stack"
 	gvisor "github.com/v2rayA/nanotun/internal/stack/gvisor"
 	"github.com/v2rayA/nanotun/internal/stack/simple"
+
+	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 )
 
 // Run wires every subsystem together and blocks until ctx is cancelled.
@@ -43,7 +46,13 @@ func Run(ctx context.Context, cfg config.Runtime, log *slog.Logger) error {
 	tun.SetUDPTimeout(cfg.UDPTimeout)
 	tun.ProcessAsync()
 
-	driver, err := createDriver(cfg, tun, log)
+	// Wrap the tunnel with the gateway handler, which:
+	//   · responds to ICMP on the virtual gateway IP (via gVisor NIC address)
+	//   · proxies DNS queries to gateway-IP:53 via the built-in relay
+	//   · drops TCP connections destined to the gateway IP
+	gwHandler := gateway.New(tun, cfg.UpstreamDNS, log)
+
+	driver, err := createDriver(cfg, gwHandler, log)
 	if err != nil {
 		return err
 	}
@@ -82,7 +91,7 @@ func buildProxy(raw string) (proxy.Proxy, error) {
 	}
 }
 
-func createDriver(cfg config.Runtime, handler *tunnel.Tunnel, log *slog.Logger) (stack.Driver, error) {
+func createDriver(cfg config.Runtime, handler adapter.TransportHandler, log *slog.Logger) (stack.Driver, error) {
 	switch cfg.StackMode {
 	case config.StackModeGVisor:
 		return gvisor.New(gvisor.Options{
