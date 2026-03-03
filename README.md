@@ -142,7 +142,7 @@ nanotun runs a virtual gateway on the TUN interface's first address:
 When `autoDefaultRoute: true`, nanotun records the original default gateway, then adds a specific host route for the proxy server's IP address via that gateway **before** installing the TUN default route. This ensures the proxy client's own outbound traffic (to its remote peer) bypasses the TUN entirely and prevents any forwarding loop.
 
 ## Process Exclusion
-The exclusion subsystem ([internal/exclude/matcher.go](internal/exclude/matcher.go)) periodically maps active flows back to process names using `gopsutil`. Any matching process causes the flow to be rejected before it hits the proxy, enabling per-application split tunneling. The process table is refreshed on a timer and the in-memory cache is **fully replaced** each cycle to prevent stale-PID accumulation.
+The exclusion subsystem ([internal/exclude/matcher.go](internal/exclude/matcher.go)) periodically maps active flows back to process names using `gopsutil`. Matching processes bypass the proxy and are sent out directly, enabling per-application split tunneling. The process table is refreshed on a timer and the in-memory cache is **fully replaced** each cycle to prevent stale-PID accumulation.
 
 The `--exclude` flag accepts multiple values and is case-insensitive. The `.exe` suffix is ignored on Windows.
 
