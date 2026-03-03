@@ -1,0 +1,101 @@
+name: Build & Release
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows
+          - { name: windows-x64,    goos: windows, goarch: amd64,   wintun_arch: amd64, ext: .exe }
+          - { name: windows-arm64,  goos: windows, goarch: arm64,   wintun_arch: arm64, ext: .exe }
+          # macOS
+          - { name: macos-x64,      goos: darwin,  goarch: amd64 }
+          - { name: macos-arm64,    goos: darwin,  goarch: arm64 }
+          # Linux
+          - { name: linux-x86,      goos: linux,   goarch: 386 }
+          - { name: linux-x64,      goos: linux,   goarch: amd64 }
+          - { name: linux-armv7,    goos: linux,   goarch: arm,    goarm: "7" }
+          - { name: linux-arm64,    goos: linux,   goarch: arm64 }
+          - { name: linux-loong64,  goos: linux,   goarch: loong64 }
+          - { name: linux-riscv64,  goos: linux,   goarch: riscv64 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm || '' }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags="-s -w" \
+            -o "nanotun${{ matrix.ext || '' }}" \
+            ./cmd/nanotun
+
+      - name: Download wintun.dll
+        if: ${{ matrix.wintun_arch != '' && startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          curl -fsSL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
+          unzip -q wintun.zip "wintun/bin/${{ matrix.wintun_arch }}/wintun.dll"
+          mv "wintun/bin/${{ matrix.wintun_arch }}/wintun.dll" wintun.dll
+
+      - name: Package archive
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION="${{ github.ref_name }}"
+          ARCHIVE="nanotun-${{ matrix.name }}-${VERSION}.tar.gz"
+          mkdir -p pkg
+          cp config.example.yaml pkg/
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp nanotun.exe pkg/
+            cp wintun.dll  pkg/
+          else
+            cp nanotun pkg/
+          fi
+          tar -czf "${ARCHIVE}" -C pkg .
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    name: Create pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "nanotun-*"
+          merge-multiple: true
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --prerelease \
+            --generate-notes \
+            nanotun-*.tar.gz

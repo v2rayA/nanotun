@@ -17,7 +17,7 @@ nano-tun is a lightweight tun2socks-style forwarder written in Go. It keeps the 
 
 ## Building
 ```bash
-git clone https://github.com/example/nano-tun.git
+git clone https://github.com/v2rayA/nanotun.git
 cd nano-tun
 go mod tidy
 go build ./cmd/nanotun

@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/example/nano-tun/internal/app"
-	"github.com/example/nano-tun/internal/config"
-	"github.com/example/nano-tun/internal/logger"
+	"github.com/v2rayA/nanotun/internal/app"
+	"github.com/v2rayA/nanotun/internal/config"
+	"github.com/v2rayA/nanotun/internal/logger"
 )
 
 func main() {

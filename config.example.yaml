@@ -1,0 +1,60 @@
+# nano-tun example configuration
+# All fields are optional unless noted; shown values are the defaults.
+
+# ── TUN interface ────────────────────────────────────────────────────────────
+
+# Name of the TUN device created by nanotun.
+tunName: nano0
+
+# Maximum Transmission Unit for the TUN device (bytes).
+mtu: 1500
+
+# ── Packet processing backend ────────────────────────────────────────────────
+
+# "gvisor"  — full gVisor netstack (recommended, better compatibility)
+# "simple"  — lightweight gVisor-primitive stack (lower overhead)
+stackMode: gvisor
+
+# ── Proxy ────────────────────────────────────────────────────────────────────
+
+# Upstream proxy URL. This field is required.
+# Supported schemes:
+#   socks5://   SOCKS5 (TCP + UDP)
+#   socks5h://  SOCKS5 with remote DNS resolution
+#   socks4://   SOCKS4 (TCP only)
+#   http://     HTTP CONNECT proxy
+#   direct://   No proxy (passthrough)
+#   reject://   Drop all connections
+# Authentication example: socks5://user:pass@127.0.0.1:1080
+proxy: socks5://127.0.0.1:1080
+
+# ── DNS override ─────────────────────────────────────────────────────────────
+
+# Force all DNS queries from proxied connections to this server.
+# Leave blank (or remove) to pass DNS through the proxy unchanged.
+# Port is optional and defaults to 53.
+dnsServer: ""
+
+# ── UDP ──────────────────────────────────────────────────────────────────────
+
+# How long an idle UDP association is kept open before being torn down.
+# Accepts Go duration strings: 30s, 1m, 2m30s, etc.
+udpTimeout: 60s
+
+# ── Process exclusion ────────────────────────────────────────────────────────
+
+# Processes listed here bypass the proxy entirely; their traffic goes directly
+# to the network. Matching is case-insensitive; the .exe suffix is ignored on
+# Windows. Wildcards are not supported.
+excludedProcesses:
+  # - curl
+  # - wget
+  # - git
+
+# How often the running-process table is rescanned to pick up new PIDs.
+excludeRefresh: 15s
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+
+# Verbosity level: debug | info | warn | error
+logLevel: info

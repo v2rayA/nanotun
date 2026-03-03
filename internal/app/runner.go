@@ -11,12 +11,12 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/tunnel"
 	"github.com/xjasonlyu/tun2socks/v2/tunnel/statistic"
 
-	"github.com/example/nano-tun/internal/config"
-	"github.com/example/nano-tun/internal/exclude"
-	"github.com/example/nano-tun/internal/proxychain"
-	"github.com/example/nano-tun/internal/stack"
-	gvisor "github.com/example/nano-tun/internal/stack/gvisor"
-	"github.com/example/nano-tun/internal/stack/simple"
+	"github.com/v2rayA/nanotun/internal/config"
+	"github.com/v2rayA/nanotun/internal/exclude"
+	"github.com/v2rayA/nanotun/internal/proxychain"
+	"github.com/v2rayA/nanotun/internal/stack"
+	gvisor "github.com/v2rayA/nanotun/internal/stack/gvisor"
+	"github.com/v2rayA/nanotun/internal/stack/simple"
 )
 
 // Run wires every subsystem together and blocks until ctx is cancelled.

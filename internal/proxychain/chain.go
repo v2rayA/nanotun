@@ -10,7 +10,7 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/metadata"
 	"github.com/xjasonlyu/tun2socks/v2/proxy"
 
-	"github.com/example/nano-tun/internal/exclude"
+	"github.com/v2rayA/nanotun/internal/exclude"
 )
 
 var ErrProcessExcluded = errors.New("connection rejected by process exclusion rules")

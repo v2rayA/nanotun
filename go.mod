@@ -1,4 +1,4 @@
-module github.com/example/nano-tun
+module github.com/v2rayA/nanotun
 
 go 1.25.5
 
