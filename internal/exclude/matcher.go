@@ -12,6 +12,8 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 
 	M "github.com/xjasonlyu/tun2socks/v2/metadata"
+
+	"github.com/v2rayA/nanotun/internal/procname"
 )
 
 // Matcher maps source flows to process names and decides whether a flow
@@ -39,7 +41,11 @@ func New(targets []string, interval time.Duration, log *slog.Logger) *Matcher {
 		pidNames:  make(map[int32]string),
 	}
 	for _, name := range targets {
-		m.targets[strings.ToLower(name)] = struct{}{}
+		clean := procname.Normalize(name)
+		if clean == "" {
+			continue
+		}
+		m.targets[clean] = struct{}{}
 	}
 	if m.interval <= 0 {
 		m.interval = 15 * time.Second
@@ -68,11 +74,11 @@ func (m *Matcher) ShouldSkip(md *M.Metadata) bool {
 	if pid == 0 {
 		return false
 	}
-	name := m.lookupName(pid)
+	name := procname.Normalize(m.lookupName(pid))
 	if name == "" {
 		return false
 	}
-	_, skip := m.targets[strings.ToLower(name)]
+	_, skip := m.targets[name]
 	return skip
 }
 
@@ -154,7 +160,7 @@ func (m *Matcher) resolveProcessNames(ctx context.Context, pids map[int32]struct
 		if err != nil {
 			continue
 		}
-		names[pid] = strings.ToLower(name)
+		names[pid] = procname.Normalize(name)
 	}
 	return names
 }

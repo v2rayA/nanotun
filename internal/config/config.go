@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/v2rayA/nanotun/internal/procname"
 )
 
 // StackMode enumerates the available packet processing backends.
@@ -242,7 +244,7 @@ func normalizeProcessList(names []string) []string {
 	out := make([]string, 0, len(names))
 	seen := make(map[string]struct{})
 	for _, name := range names {
-		cleaned := strings.ToLower(strings.TrimSpace(name))
+		cleaned := procname.Normalize(name)
 		if cleaned == "" {
 			continue
 		}
