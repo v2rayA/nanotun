@@ -11,21 +11,26 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/proxy"
 
 	"github.com/v2rayA/nanotun/internal/exclude"
+	"github.com/v2rayA/nanotun/internal/netaddr"
 )
 
 var ErrProcessExcluded = errors.New("connection rejected by process exclusion rules")
 
 // Options configures the behavior of a Chain wrapper.
 type Options struct {
-	Matcher        *exclude.Matcher
-	DNSOverride    netip.AddrPort
-	HasDNSOverride bool
-	Logger         *slog.Logger
+	Matcher *exclude.Matcher
+	// ExcludedPrefixes are IP prefixes whose traffic is routed via a direct
+	// connection instead of the upstream proxy.  IANA-reserved ranges are
+	// always treated as direct regardless of this list.
+	ExcludedPrefixes []netip.Prefix
+	Logger           *slog.Logger
 }
 
-// Chain augments a proxy.Proxy with process exclusion and DNS overrides.
+// Chain augments a proxy.Proxy with process exclusion, reserved-IP bypass,
+// and user-defined IP exclusion.
 type Chain struct {
 	upstream proxy.Proxy
+	direct   proxy.Proxy
 	opts     Options
 }
 
@@ -34,26 +39,57 @@ func New(upstream proxy.Proxy, opts Options) *Chain {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Chain{upstream: upstream, opts: opts}
+	return &Chain{
+		upstream: upstream,
+		direct:   proxy.NewDirect(),
+		opts:     opts,
+	}
 }
 
 func (c *Chain) DialContext(ctx context.Context, md *metadata.Metadata) (net.Conn, error) {
-	if err := c.filter(md); err != nil {
+	if c.isDirect(md) {
+		c.opts.Logger.Debug("chain: direct (reserved/excluded IP)",
+			"dst", md.DestinationAddress())
+		return c.direct.DialContext(ctx, md)
+	}
+	if err := c.filterProcess(md); err != nil {
 		return nil, err
 	}
-	target := c.applyOverrides(md)
-	return c.upstream.DialContext(ctx, target)
+	return c.upstream.DialContext(ctx, md)
 }
 
 func (c *Chain) DialUDP(md *metadata.Metadata) (net.PacketConn, error) {
-	if err := c.filter(md); err != nil {
+	if c.isDirect(md) {
+		c.opts.Logger.Debug("chain: direct (reserved/excluded IP)",
+			"dst", md.DestinationAddress())
+		return c.direct.DialUDP(md)
+	}
+	if err := c.filterProcess(md); err != nil {
 		return nil, err
 	}
-	target := c.applyOverrides(md)
-	return c.upstream.DialUDP(target)
+	return c.upstream.DialUDP(md)
 }
 
-func (c *Chain) filter(md *metadata.Metadata) error {
+// isDirect returns true when the destination should bypass the upstream proxy:
+//   - IANA-reserved addresses (private, loopback, link-local, multicast, …)
+//   - Any prefix in opts.ExcludedPrefixes
+func (c *Chain) isDirect(md *metadata.Metadata) bool {
+	dst := md.DstIP.Unmap()
+	if !dst.IsValid() {
+		return false
+	}
+	if netaddr.IsReserved(dst) {
+		return true
+	}
+	for _, p := range c.opts.ExcludedPrefixes {
+		if p.Contains(dst) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Chain) filterProcess(md *metadata.Metadata) error {
 	if c.opts.Matcher == nil {
 		return nil
 	}
@@ -62,17 +98,4 @@ func (c *Chain) filter(md *metadata.Metadata) error {
 		return ErrProcessExcluded
 	}
 	return nil
-}
-
-func (c *Chain) applyOverrides(md *metadata.Metadata) *metadata.Metadata {
-	if !c.opts.HasDNSOverride {
-		return md
-	}
-	if md.Network != metadata.UDP || md.DstPort != 53 {
-		return md
-	}
-	clone := *md
-	clone.DstIP = c.opts.DNSOverride.Addr()
-	clone.DstPort = c.opts.DNSOverride.Port()
-	return &clone
 }

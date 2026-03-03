@@ -9,17 +9,20 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/core/adapter"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/tun"
 
+	"github.com/v2rayA/nanotun/internal/autoroute"
 	"github.com/v2rayA/nanotun/internal/netaddr"
 	"github.com/v2rayA/nanotun/internal/tunconf"
 )
 
 // Options controls the lightweight stack.
 type Options struct {
-	TunName    string
-	MTU        int
-	Handler    adapter.TransportHandler
-	Logger     *slog.Logger
-	EnableIPv6 bool
+	TunName          string
+	MTU              int
+	Handler          adapter.TransportHandler
+	Logger           *slog.Logger
+	EnableIPv6       bool
+	AutoDefaultRoute bool
+	ProxyAddr        string
 }
 
 // Driver hosts the simplified netstack pipeline.
@@ -48,6 +51,14 @@ func (d *Driver) Run(ctx context.Context) error {
 
 	if err := tunconf.Configure(dev.Name()); err != nil {
 		return fmt.Errorf("configure tun: %w", err)
+	}
+
+	if d.opts.AutoDefaultRoute {
+		cleanupRoutes, err := autoroute.Apply(dev.Name(), d.opts.ProxyAddr, d.opts.Logger)
+		if err != nil {
+			return fmt.Errorf("autoroute: %w", err)
+		}
+		defer cleanupRoutes()
 	}
 
 	s, err := buildStack(dev, d.opts.Handler, d.opts.EnableIPv6)

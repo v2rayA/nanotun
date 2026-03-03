@@ -35,10 +35,9 @@ func Run(ctx context.Context, cfg config.Runtime, log *slog.Logger) error {
 	}
 
 	chain := proxychain.New(upstream, proxychain.Options{
-		Matcher:        matcher,
-		HasDNSOverride: cfg.HasDNSOverride,
-		DNSOverride:    cfg.DNSAddr,
-		Logger:         log,
+		Matcher:          matcher,
+		ExcludedPrefixes: cfg.ExcludedIPs,
+		Logger:           log,
 	})
 
 	tun := tunnel.New(chain, statistic.DefaultManager)
@@ -50,7 +49,7 @@ func Run(ctx context.Context, cfg config.Runtime, log *slog.Logger) error {
 	//   · responds to ICMP on the virtual gateway IP (via gVisor NIC address)
 	//   · proxies DNS queries to gateway-IP:53 via the built-in relay
 	//   · drops TCP connections destined to the gateway IP
-	gwHandler := gateway.New(tun, cfg.UpstreamDNS, log)
+	gwHandler := gateway.New(tun, cfg.DNS, log)
 
 	driver, err := createDriver(cfg, gwHandler, log)
 	if err != nil {
@@ -73,21 +72,13 @@ func buildProxy(raw string) (proxy.Proxy, error) {
 	user := u.User.Username()
 	pass, _ := u.User.Password()
 	switch scheme {
-	case "direct":
-		return proxy.NewDirect(), nil
-	case "reject":
-		return proxy.NewReject(), nil
-	case "http", "https":
-		return proxy.NewHTTP(addr, user, pass)
-	case "socks4":
-		return proxy.NewSocks4(addr, user)
 	case "socks5", "socks5h":
 		if addr == "" {
-			addr = u.Path // socks5 over UDS
+			addr = u.Path // socks5 over Unix domain socket
 		}
 		return proxy.NewSocks5(addr, user, pass)
 	default:
-		return nil, fmt.Errorf("unsupported proxy scheme %q", scheme)
+		return nil, fmt.Errorf("unsupported proxy scheme %q (only socks5 / socks5h are accepted)", scheme)
 	}
 }
 
@@ -95,18 +86,22 @@ func createDriver(cfg config.Runtime, handler adapter.TransportHandler, log *slo
 	switch cfg.StackMode {
 	case config.StackModeGVisor:
 		return gvisor.New(gvisor.Options{
-			TunName: cfg.TunName,
-			MTU:     cfg.MTU,
-			Handler: handler,
-			Logger:  log,
+			TunName:          cfg.TunName,
+			MTU:              cfg.MTU,
+			Handler:          handler,
+			Logger:           log,
+			AutoDefaultRoute: cfg.AutoDefaultRoute,
+			ProxyAddr:        cfg.Proxy,
 		})
 	case config.StackModeSimple:
 		return simple.New(simple.Options{
-			TunName:    cfg.TunName,
-			MTU:        cfg.MTU,
-			Handler:    handler,
-			Logger:     log,
-			EnableIPv6: true,
+			TunName:          cfg.TunName,
+			MTU:              cfg.MTU,
+			Handler:          handler,
+			Logger:           log,
+			EnableIPv6:       true,
+			AutoDefaultRoute: cfg.AutoDefaultRoute,
+			ProxyAddr:        cfg.Proxy,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported stack mode %q", cfg.StackMode)

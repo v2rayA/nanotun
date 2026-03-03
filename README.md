@@ -39,15 +39,43 @@ nanotun automatically programs the following addresses on the TUN device at star
 Both addresses are fixed. After nanotun starts:
 
 1. Add default routes into the TUN device so traffic enters the tunnel:
+
+   **Linux**
    ```bash
-   # Linux
    ip route add default via 198.18.0.1 dev nano0
    ip -6 route add default via fdfe:dcba:9876::1 dev nano0
    ```
-2. Point your system DNS resolver at the gateway so nanotun can relay queries:
+
+   **macOS**
    ```bash
-   # Linux (systemd-resolved or /etc/resolv.conf)
+   sudo route add -net 0.0.0.0/0 198.18.0.1
+   sudo route add -inet6 ::/0 fdfe:dcba:9876::1
+   ```
+
+   **Windows** (Administrator PowerShell)
+   ```powershell
+   # Find the interface index of the TUN device first
+   $idx = (Get-NetAdapter | Where-Object { $_.Name -like "*nano*" }).ifIndex
+   New-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0"  -NextHop "198.18.0.1"
+   New-NetRoute -InterfaceIndex $idx -DestinationPrefix "::/0"       -NextHop "fdfe:dcba:9876::1"
+   ```
+
+2. Point your system DNS resolver at the gateway so nanotun can relay queries:
+
+   **Linux** (systemd-resolved or /etc/resolv.conf)
+   ```bash
    echo "nameserver 198.18.0.1" | sudo tee /etc/resolv.conf
+   ```
+
+   **macOS** (System Settings → Network → DNS, or via `networksetup`)
+   ```bash
+   # Replace "Wi-Fi" with your active service name
+   sudo networksetup -setdnsservers "Wi-Fi" 198.18.0.1
+   ```
+
+   **Windows** (Administrator PowerShell)
+   ```powershell
+   Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses "198.18.0.1"
    ```
 
 ## Quick Start
@@ -57,7 +85,7 @@ Both addresses are fixed. After nanotun starts:
    mtu: 1500
    stackMode: gvisor
    proxy: socks5://127.0.0.1:1080
-   upstreamDNS: 8.8.8.8   # where nanotun forwards DNS queries from the OS
+   dns: 8.8.8.8   # where nanotun forwards intercepted DNS queries
    udpTimeout: 1m
    logLevel: info
    ```
@@ -65,7 +93,7 @@ Both addresses are fixed. After nanotun starts:
    ```bash
    sudo ./nanotun --config ./nanotun.yaml
    ```
-3. Configure default routes and DNS as shown in [Network Layout](#network-layout).
+3. Configure default routes and DNS as shown in [Network Layout](#network-layout), **or** set `autoDefaultRoute: true` in the config to let nanotun handle this automatically.
 
 ## CLI Flags
 `cmd/nanotun` exposes the following switches (all optional when covered by the YAML config):
@@ -77,8 +105,8 @@ Both addresses are fixed. After nanotun starts:
 | `--mtu` | Override MTU value. |
 | `--stack` | `gvisor` or `simple`. |
 | `--proxy` | Upstream proxy URL (e.g., `socks5://127.0.0.1:1080`). |
-| `--dns` | DNS override for proxied flows (`host` or `host:port`). Applied only to UDP/53 traffic already inside the tunnel. |
-| `--upstream-dns` | Upstream resolver for the built-in DNS relay (default `8.8.8.8:53`). |
+| `--dns` | Upstream resolver for the built-in DNS relay (default `8.8.8.8:53`). Intercepted DNS queries are forwarded here; does not go through the proxy. |
+| ` ` | Automatically install default routes and DNS redirect rules at startup; cleaned up on exit. |
 | `--udp-timeout` | Duration before idle UDP flows are closed. |
 | `--exclude` | Process name to bypass (repeatable). |
 | `--exclude-refresh` | Interval for refreshing the process table. |
@@ -95,28 +123,23 @@ The YAML schema handled by [internal/config/config.go](internal/config/config.go
 | `mtu` | `1500` | MTU to program on the device. |
 | `stackMode` | `gvisor` | `gvisor` for the full netstack, `simple` for the trimmed driver. |
 | `proxy` | *(required)* | Upstream proxy URL. Supported schemes: `socks5://`, `socks5h://`, `socks4://`, `http://`, `direct://`, `reject://`. |
-| `dnsServer` | *(empty)* | Redirect DNS queries **inside the tunnel** to this server (prevents DNS leaks). Distinct from `upstreamDNS` — see below. |
-| `upstreamDNS` | `8.8.8.8:53` | Upstream resolver for the **built-in DNS relay** that listens on the gateway IP. Does not go through the proxy. |
+| `dns` | `8.8.8.8:53` | Upstream resolver for the built-in DNS relay. nanotun intercepts all DNS at the gateway address and forwards queries here, bypassing the proxy. |
+| `autoDefaultRoute` | `false` | When `true`, auto-installs OS routes and DNS redirect rules and cleans up on exit. |
 | `udpTimeout` | `1m` | Idle timeout for UDP sessions. |
 | `excludedProcesses` | *(none)* | Lower-cased executables that should never transit the proxy. |
 | `excludeRefresh` | `15s` | Scan interval for process table refresh. |
 | `logLevel` | `info` | `debug` / `info` / `warn` / `error`. |
 
-### `dnsServer` vs `upstreamDNS`
-
-These two fields operate at different layers:
-
-- **`upstreamDNS`** — serves the OS. nanotun's gateway relay receives DNS queries sent to `198.18.0.1:53` and forwards them to this server using the **host's native network** (not through the proxy). Use this to give your system a working resolver.
-- **`dnsServer`** — rewrites the destination of DNS packets **already inside the tunnel**. Traffic is still forwarded through the proxy, just redirected to a different server. Use this to prevent DNS leaks or force all lookups through a specific remote resolver.
-
-Both can be set simultaneously.
-
 ## Built-in Gateway
 nanotun runs a virtual gateway on the TUN interface's first address:
 
 - **ICMP echo (ping)** to `198.18.0.1` / `fdfe:dcba:9876::1` is answered by the gVisor stack — useful for confirming the tunnel is alive.
-- **DNS relay** on UDP port 53 of the gateway address forwards queries to `upstreamDNS` via the host OS network (bypassing the proxy), then returns the response into the tunnel.
+- **DNS relay** on UDP port 53 of the gateway address intercepts all DNS queries and forwards them to the configured `dns` server via the host OS network (bypassing the proxy). When `autoDefaultRoute` is enabled nftables/iptables automatically redirect all outbound port-53 traffic to this relay; otherwise, point your system DNS at `198.18.0.1` manually.
 - **TCP** to the gateway address is silently dropped (no service listens there).
+
+### Traffic loop prevention
+
+When `autoDefaultRoute: true`, nanotun records the original default gateway, then adds a specific host route for the proxy server's IP address via that gateway **before** installing the TUN default route. This ensures the proxy client's own outbound traffic (to its remote peer) bypasses the TUN entirely and prevents any forwarding loop.
 
 ## Process Exclusion
 The exclusion subsystem ([internal/exclude/matcher.go](internal/exclude/matcher.go)) periodically maps active flows back to process names using `gopsutil`. Any matching process causes the flow to be rejected before it hits the proxy, enabling per-application split tunneling. The process table is refreshed on a timer and the in-memory cache is **fully replaced** each cycle to prevent stale-PID accumulation.

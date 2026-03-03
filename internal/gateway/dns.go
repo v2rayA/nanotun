@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"log/slog"
-	"net"
 	"net/netip"
 	"time"
 
@@ -44,7 +43,11 @@ func (r *DNSRelay) Handle(conn adapter.UDPConn) {
 	query := buf[:n]
 
 	// --- forward to upstream DNS via host OS network (bypasses TUN) ---
-	upConn, err := net.DialTimeout("udp", r.upstream.String(), dnsForwardTimeout)
+	//
+	// markDialer() stamps the socket with nanotunMark (SO_MARK on Linux) so
+	// that the nft/iptables port-53 redirect rules can exempt this connection
+	// and avoid a forwarding loop.
+	upConn, err := markDialer().Dial("udp", r.upstream.String())
 	if err != nil {
 		r.log.Debug("dns relay: dial upstream", "upstream", r.upstream, "err", err)
 		return

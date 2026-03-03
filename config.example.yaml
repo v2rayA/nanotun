@@ -37,19 +37,31 @@ stackMode: gvisor
 # Authentication example: socks5://user:pass@127.0.0.1:1080
 proxy: socks5://127.0.0.1:1080
 
-# ── DNS override ─────────────────────────────────────────────────────────────
+# ── DNS ─────────────────────────────────────────────────────────────────────
 
-# Force all DNS queries from proxied connections to this server.
-# Leave blank (or remove) to pass DNS through the proxy unchanged.
+# Upstream DNS server the built-in gateway relay forwards queries to.
+#
+# nanotun intercepts all DNS traffic at the virtual gateway address
+# (198.18.0.1 / fdfe:dcba:9876::1) — either because the OS DNS is pointed
+# there manually, or because autoDefaultRoute redirected port 53 via
+# nftables/iptables — and forwards the queries to this server over the
+# host's native network (not through the proxy).
+#
 # Port is optional and defaults to 53.
-dnsServer: ""
+dns: 8.8.8.8
 
-# Upstream DNS server used by nanotun's built-in DNS relay.
-# nanotun listens for DNS queries on the virtual gateway address
-# (198.18.0.1 / fdfe:dcba:9876::1) and forwards them here.
-# Configure your OS to use 198.18.0.1 as the system DNS resolver.
-# Port is optional and defaults to 53.
-upstreamDNS: 8.8.8.8
+# ── Automatic routing ────────────────────────────────────────────────────────
+
+# When true, nanotun automatically installs default routes that send all
+# traffic through the TUN gateway and redirects DNS port 53 to the built-in
+# relay on startup.  All changes are undone cleanly when nanotun exits.
+#
+# Linux   : ip route (default) + nftables (preferred) or iptables for DNS
+# macOS   : route add + networksetup -setdnsservers
+# Windows : netsh interface route + netsh interface dnsservers
+#
+# Requires elevated privileges (root / Administrator).
+autoDefaultRoute: false
 
 # ── UDP ──────────────────────────────────────────────────────────────────────
 
