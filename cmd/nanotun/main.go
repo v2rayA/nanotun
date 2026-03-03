@@ -1,0 +1,89 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/pflag"
+
+	"github.com/example/nano-tun/internal/app"
+	"github.com/example/nano-tun/internal/config"
+	"github.com/example/nano-tun/internal/logger"
+)
+
+func main() {
+	runtimeCfg, err := loadRuntimeConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config error:", err)
+		os.Exit(1)
+	}
+
+	log := logger.Setup(runtimeCfg.LogLevel)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := app.Run(ctx, runtimeCfg, log); err != nil && err != context.Canceled {
+		log.Error("run failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func loadRuntimeConfig() (config.Runtime, error) {
+	fs := pflag.NewFlagSet("nanotun", pflag.ExitOnError)
+
+	configPath := fs.String("config", "", "Path to YAML configuration file")
+	tunName := fs.String("tun", "", "Name of the TUN interface")
+	mtu := fs.Int("mtu", 0, "MTU to enforce for the TUN device")
+	stackMode := fs.String("stack", "", "Stack mode: gvisor | simple")
+	proxyAddr := fs.String("proxy", "", "Proxy address, e.g. socks5://127.0.0.1:1080")
+	dnsOverride := fs.String("dns", "", "Optional DNS server override (host or host:port)")
+	udpTimeout := fs.Duration("udp-timeout", 0, "UDP session timeout")
+	excludeProcesses := fs.StringArray("exclude", nil, "Process name to bypass; repeatable")
+	excludeRefresh := fs.Duration("exclude-refresh", 0, "Process table refresh interval")
+	logLevel := fs.String("log-level", "", "Log level: debug|info|warn|error")
+
+	_ = fs.Parse(os.Args[1:])
+
+	base := config.Default()
+	fileCfg, err := config.LoadFile(*configPath)
+	if err != nil {
+		return config.Runtime{}, err
+	}
+	base.Merge(fileCfg)
+
+	var overrides config.Config
+	if fs.Changed("tun") {
+		overrides.TunName = *tunName
+	}
+	if fs.Changed("mtu") {
+		overrides.MTU = *mtu
+	}
+	if fs.Changed("stack") {
+		overrides.StackMode = *stackMode
+	}
+	if fs.Changed("proxy") {
+		overrides.Proxy = *proxyAddr
+	}
+	if fs.Changed("dns") {
+		overrides.DNSServer = *dnsOverride
+	}
+	if fs.Changed("udp-timeout") {
+		overrides.UDPTimeout = *udpTimeout
+	}
+	if fs.Changed("exclude") {
+		overrides.ExcludedProcesses = *excludeProcesses
+	}
+	if fs.Changed("exclude-refresh") {
+		overrides.ExcludeRefresh = *excludeRefresh
+	}
+	if fs.Changed("log-level") {
+		overrides.LogLevel = *logLevel
+	}
+
+	base.Merge(overrides)
+	return base.Finalize()
+}
