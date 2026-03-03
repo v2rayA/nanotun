@@ -46,7 +46,7 @@ jobs:
             ./cmd/nanotun
 
       - name: Download wintun.dll
-        if: ${{ matrix.wintun_arch != '' && startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ matrix.goos == 'windows' }} && startsWith(github.ref, 'refs/tags/')
         run: |
           curl -fsSL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
           unzip -q wintun.zip "wintun/bin/${{ matrix.wintun_arch }}/wintun.dll"
