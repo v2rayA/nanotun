@@ -41,11 +41,11 @@ func TestFlowKeyUnmapIPv4Mapped(t *testing.T) {
 	plain := flowKey(M.TCP, netip.AddrPortFrom(
 		netip.MustParseAddr("192.168.1.10"), 8080))
 	// IPv4-mapped IPv6 → after Unmap() it should yield the same key.
-	mapped := netip.MustParseAddr("::ffff:192.168.1.10").Unmap()
-	unmapped := flowKey(M.TCP, netip.AddrPortFrom(mapped, 8080))
+	unmapped := netip.MustParseAddr("::ffff:192.168.1.10").Unmap()
+	fromMapped := flowKey(M.TCP, netip.AddrPortFrom(unmapped, 8080))
 
-	if plain != unmapped {
-		t.Fatalf("flow keys differ after Unmap: plain=%q  unmapped=%q", plain, unmapped)
+	if plain != fromMapped {
+		t.Fatalf("flow keys differ after Unmap: plain=%q  fromMapped=%q", plain, fromMapped)
 	}
 }
 
