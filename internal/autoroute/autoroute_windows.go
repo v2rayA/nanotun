@@ -29,6 +29,9 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			cleanups[i]()
 		}
+		// Flush DNS cache so that the Windows DNS Client service
+		// immediately picks up the restored DNS configuration.
+		_ = run("ipconfig", "/flushdns")
 	}
 
 	gw4 := netaddr.GatewayIPv4.String()
@@ -58,27 +61,53 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 		})
 	}
 
-	// ── IPv4 default route ───────────────────────────────────────────────
+	// ── IPv4 default route (split routing) ───────────────────────────────
+	// Use two /1 routes instead of a single /0 route so that the original
+	// default route (0.0.0.0/0) on the physical NIC is never displaced.
+	// The /1 routes are more specific and take precedence over any /0 route,
+	// and removing them cleanly restores the original routing table.
 	if err := run("netsh", "interface", "ipv4", "add", "route",
-		"0.0.0.0/0", tunName, gw4, "metric=1", "store=active"); err != nil {
-		return nop, fmt.Errorf("autoroute: add ipv4 default route: %w", err)
+		"0.0.0.0/1", tunName, gw4, "metric=1", "store=active"); err != nil {
+		return nop, fmt.Errorf("autoroute: add ipv4 default route (0/1): %w", err)
 	}
 	cleanups = append(cleanups, func() {
 		if err := run("netsh", "interface", "ipv4", "delete", "route",
-			"0.0.0.0/0", tunName, gw4); err != nil {
-			log.Warn("autoroute: remove ipv4 default route", "err", err)
+			"0.0.0.0/1", tunName, gw4); err != nil {
+			log.Warn("autoroute: remove ipv4 default route (0/1)", "err", err)
+		}
+	})
+	if err := run("netsh", "interface", "ipv4", "add", "route",
+		"128.0.0.0/1", tunName, gw4, "metric=1", "store=active"); err != nil {
+		revert()
+		return nop, fmt.Errorf("autoroute: add ipv4 default route (128/1): %w", err)
+	}
+	cleanups = append(cleanups, func() {
+		if err := run("netsh", "interface", "ipv4", "delete", "route",
+			"128.0.0.0/1", tunName, gw4); err != nil {
+			log.Warn("autoroute: remove ipv4 default route (128/1)", "err", err)
 		}
 	})
 
-	// ── IPv6 default route ───────────────────────────────────────────────
+	// ── IPv6 default route (split routing) ───────────────────────────────
 	if err := run("netsh", "interface", "ipv6", "add", "route",
-		"::/0", tunName, gw6, "metric=1", "store=active"); err != nil {
-		log.Warn("autoroute: add ipv6 default route", "err", err)
+		"::/1", tunName, gw6, "metric=1", "store=active"); err != nil {
+		log.Warn("autoroute: add ipv6 default route (::/1)", "err", err)
 	} else {
 		cleanups = append(cleanups, func() {
 			if err := run("netsh", "interface", "ipv6", "delete", "route",
-				"::/0", tunName, gw6); err != nil {
-				log.Warn("autoroute: remove ipv6 default route", "err", err)
+				"::/1", tunName, gw6); err != nil {
+				log.Warn("autoroute: remove ipv6 default route (::/1)", "err", err)
+			}
+		})
+	}
+	if err := run("netsh", "interface", "ipv6", "add", "route",
+		"8000::/1", tunName, gw6, "metric=1", "store=active"); err != nil {
+		log.Warn("autoroute: add ipv6 default route (8000::/1)", "err", err)
+	} else {
+		cleanups = append(cleanups, func() {
+			if err := run("netsh", "interface", "ipv6", "delete", "route",
+				"8000::/1", tunName, gw6); err != nil {
+				log.Warn("autoroute: remove ipv6 default route (8000::/1)", "err", err)
 			}
 		})
 	}

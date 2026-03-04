@@ -26,6 +26,7 @@ type Matcher struct {
 	mu        sync.RWMutex
 	flowToPID map[string]int32
 	pidNames  map[int32]string
+	lastScan  time.Time // wall-clock time of the most recent scan
 }
 
 // New creates a matcher. When no targets are provided the matcher is inert.
@@ -72,7 +73,14 @@ func (m *Matcher) ShouldSkip(md *M.Metadata) bool {
 	}
 	pid := m.lookupPID(key)
 	if pid == 0 {
-		return false
+		// Flow not yet in the cache.  Trigger an on-demand rescan so that
+		// connections established after the last periodic scan are matched
+		// immediately instead of waiting up to <interval> seconds.
+		m.refreshOnMiss()
+		pid = m.lookupPID(key)
+		if pid == 0 {
+			return false
+		}
 	}
 	name := procname.Normalize(m.lookupName(pid))
 	if name == "" {
@@ -98,11 +106,26 @@ func (m *Matcher) refreshLoop(ctx context.Context) {
 	}
 }
 
+// refreshOnMiss triggers an immediate rescan when the periodic cache does
+// not contain a flow.  To avoid excessive system calls the rescan is rate-
+// limited: at most one scan per second.
+func (m *Matcher) refreshOnMiss() {
+	m.mu.RLock()
+	stale := time.Since(m.lastScan) > time.Second
+	m.mu.RUnlock()
+	if !stale {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m.scanOnce(ctx)
+}
+
 func (m *Matcher) scanOnce(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	types := []string{"tcp", "tcp4", "tcp6", "udp", "udp4", "udp6"}
+	types := []string{"tcp4", "tcp6", "udp4", "udp6"}
 	nextFlow := make(map[string]int32)
 	pidSet := make(map[int32]struct{})
 
@@ -120,6 +143,11 @@ func (m *Matcher) scanOnce(ctx context.Context) {
 			if err != nil {
 				continue
 			}
+			// Normalise IPv4-mapped IPv6 addresses (::ffff:x.x.x.x → x.x.x.x)
+			// so that the flow key matches the plain IPv4 source the TUN stack
+			// reports.  This is critical on Windows where dual-stack sockets may
+			// appear in the IPv6 connection table only.
+			addr = addr.Unmap()
 			if c.Laddr.Port == 0 {
 				continue
 			}
@@ -139,6 +167,7 @@ func (m *Matcher) scanOnce(ctx context.Context) {
 	m.mu.Lock()
 	m.flowToPID = nextFlow
 	m.pidNames = names // replace entirely to evict stale PIDs (prevents unbounded growth)
+	m.lastScan = time.Now()
 	m.mu.Unlock()
 }
 
