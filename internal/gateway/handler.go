@@ -42,7 +42,8 @@ var lanOnlyUDPPorts = map[uint16]bool{
 // Handler wraps an adapter.TransportHandler and intercepts traffic destined
 // for the well-known gateway IP addresses.
 //
-//   - TCP to gateway: dropped immediately (no service runs on TCP at the GW).
+//   - TCP/53 to gateway: handled by the built-in DNS relay (DNS-over-TCP).
+//   - TCP to gateway (other ports): dropped immediately.
 //   - TCP on LAN-only ports (NetBIOS/SMB): dropped.
 //   - UDP/53 to gateway: handled by the built-in DNS relay.
 //   - UDP on LAN-only ports (NetBIOS/mDNS): dropped.
@@ -75,11 +76,16 @@ func New(upstream adapter.TransportHandler, dnsUpstream netip.AddrPort, log *slo
 }
 
 // HandleTCP implements adapter.TransportHandler.
-// TCP connections to the gateway IP or on LAN-only ports are silently dropped.
+// TCP connections to the gateway IP are dropped, except on port 53 which is
+// handled by the built-in DNS relay. LAN-only ports are also dropped.
 func (h *Handler) HandleTCP(conn adapter.TCPConn) {
 	id := conn.ID()
 	dst := addrFromTCPIP(id.LocalAddress)
 	if dst == h.gw4 || dst == h.gw6 {
+		if id.LocalPort == 53 {
+			go h.dns.HandleTCP(conn)
+			return
+		}
 		_ = conn.Close()
 		return
 	}
