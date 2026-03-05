@@ -86,3 +86,8 @@ excludeRefresh: 15s
 
 # Verbosity level: debug | info | warn | error
 logLevel: info
+
+# nanotun also writes logs to ./logs by default:
+# - Date-based files (nanotun-YYYY-MM-DD*.log)
+# - 1MB max per file (automatic rotation)
+# - Keep 3 days of logs (older files deleted automatically)

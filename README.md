@@ -12,6 +12,7 @@ nano-tun is a lightweight tun2socks-style forwarder written in Go. It keeps the 
 - Configurable UDP session timeout, MTU, and TUN device name across platforms.
 - YAML configuration merged with CLI flags for reproducible deployments.
 - Structured logging via `slog` with adjustable verbosity levels.
+- Built-in log file output with date-based files, 1MB rotation, and 3-day retention.
 
 ## Prerequisites
 - Go 1.22 or newer on Linux, Windows, or macOS.
@@ -111,6 +112,11 @@ Both addresses are fixed. After nanotun starts:
 | `--exclude` | Process name to bypass (repeatable). |
 | `--exclude-refresh` | Interval for refreshing the process table. |
 | `--log-level` | `debug`, `info`, `warn`, or `error`. |
+
+By default, nanotun writes logs to both stderr and `./logs`:
+- file pattern: `nanotun-YYYY-MM-DD.log` (and `*.N.log` after size rotation)
+- max file size: 1MB
+- retention: 3 days (older files are removed automatically)
 
 CLI values always override YAML fields. See [cmd/nanotun/main.go](cmd/nanotun/main.go) for the authoritative flag wiring.
 

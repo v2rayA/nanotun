@@ -1,17 +1,43 @@
 package logger
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 var global = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+var (
+	fileCloserMu sync.Mutex
+	fileCloser   io.Closer
+)
+
+const (
+	defaultLogDir      = "logs"
+	defaultLogPrefix   = "nanotun"
+	defaultMaxFileSize = 1 << 20 // 1 MiB
+	defaultMaxAge      = 72 * time.Hour
+)
 
 // Setup configures the global slog logger according to the requested level.
 func Setup(level string) *slog.Logger {
 	lvl := parseLevel(level)
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
+	out := io.Writer(os.Stderr)
+
+	if w, closer, err := newRotatingFileWriter(defaultLogDir, defaultLogPrefix, defaultMaxFileSize, defaultMaxAge, time.Now); err == nil {
+		fileCloserMu.Lock()
+		if fileCloser != nil {
+			_ = fileCloser.Close()
+		}
+		fileCloser = closer
+		fileCloserMu.Unlock()
+		out = io.MultiWriter(os.Stderr, w)
+	}
+
+	handler := slog.NewTextHandler(out, &slog.HandlerOptions{Level: lvl})
 	global = slog.New(handler)
 	return global
 }
