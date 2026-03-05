@@ -45,17 +45,16 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 	log.Debug("autoroute: original gateway", "gw4", origGW4)
 
 	// ── Add bypass routes for the proxy server BEFORE touching the default ─
-	// route.exe is used here so we don't need to know the interface name.
 	proxyIPs := resolveProxyHost(proxyAddr, log)
 	for _, ip := range proxyIPs {
-		if err := run("route", "add", ip, "mask", "255.255.255.255", origGW4); err != nil {
+		if err := addIPv4HostRoutePS(ip, origGW4); err != nil {
 			log.Warn("autoroute: add proxy bypass route", "ip", ip, "err", err)
 			continue
 		}
 		log.Info("autoroute: proxy bypass route added", "ip", ip, "via", origGW4)
 		ipCopy := ip
 		cleanups = append(cleanups, func() {
-			if err := run("route", "delete", ipCopy, "mask", "255.255.255.255", origGW4); err != nil {
+			if err := removeIPv4HostRoutePS(ipCopy, origGW4); err != nil {
 				log.Warn("autoroute: remove proxy bypass route", "ip", ipCopy, "err", err)
 			}
 		})
@@ -63,11 +62,11 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 
 	// Ensure local loopback keeps the most specific route while tunnel is active.
 	// This prevents localhost traffic from being caught by the split default routes.
-	if err := run("route", "add", "127.0.0.0", "mask", "255.0.0.0", "127.0.0.1", "metric", "1"); err != nil {
+	if err := addLocalhostRoutePS(); err != nil {
 		log.Warn("autoroute: add localhost route", "err", err)
 	} else {
 		cleanups = append(cleanups, func() {
-			if err := run("route", "delete", "127.0.0.0", "mask", "255.0.0.0", "127.0.0.1"); err != nil {
+			if err := removeLocalhostRoutePS(); err != nil {
 				log.Warn("autoroute: remove localhost route", "err", err)
 			}
 		})
@@ -240,6 +239,54 @@ func run(name string, args ...string) error {
 		return fmt.Errorf("%s %v: %s", name, args, out)
 	}
 	return nil
+}
+
+func runPowerShell(script string) error {
+	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+}
+
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func addIPv4HostRoutePS(ip, nextHop string) error {
+	script := "New-NetRoute -AddressFamily IPv4 " +
+		"-DestinationPrefix " + psQuote(ip+"/32") + " " +
+		"-NextHop " + psQuote(nextHop) + " " +
+		"-RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop"
+	return runPowerShell(script)
+}
+
+func removeIPv4HostRoutePS(ip, nextHop string) error {
+	script := "Remove-NetRoute -AddressFamily IPv4 " +
+		"-DestinationPrefix " + psQuote(ip+"/32") + " " +
+		"-NextHop " + psQuote(nextHop) + " " +
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
+	return runPowerShell(script)
+}
+
+func addLocalhostRoutePS() error {
+	const (
+		loopbackAddr   = "127.0.0.1"
+		loopbackPrefix = "127.0.0.0/8"
+		nextHopOnLink  = "0.0.0.0"
+	)
+	script := "$ifIndex = (Get-NetIPAddress -AddressFamily IPv4 -IPAddress " + psQuote(loopbackAddr) + " -ErrorAction Stop | " +
+		"Select-Object -First 1).InterfaceIndex; " +
+		"New-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
+		"-InterfaceIndex $ifIndex -NextHop " + psQuote(nextHopOnLink) + " -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop"
+	return runPowerShell(script)
+}
+
+func removeLocalhostRoutePS() error {
+	const (
+		loopbackPrefix = "127.0.0.0/8"
+		nextHopOnLink  = "0.0.0.0"
+	)
+	script := "Remove-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
+		"-NextHop " + psQuote(nextHopOnLink) + " " +
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
+	return runPowerShell(script)
 }
 
 func nop() {}
