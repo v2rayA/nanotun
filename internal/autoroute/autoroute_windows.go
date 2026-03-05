@@ -55,8 +55,20 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 		log.Info("autoroute: proxy bypass route added", "ip", ip, "via", origGW4)
 		ipCopy := ip
 		cleanups = append(cleanups, func() {
-			if err := run("route", "delete", ipCopy, "mask", "255.255.255.255"); err != nil {
+			if err := run("route", "delete", ipCopy, "mask", "255.255.255.255", origGW4); err != nil {
 				log.Warn("autoroute: remove proxy bypass route", "ip", ipCopy, "err", err)
+			}
+		})
+	}
+
+	// Ensure local loopback keeps the most specific route while tunnel is active.
+	// This prevents localhost traffic from being caught by the split default routes.
+	if err := run("route", "add", "127.0.0.0", "mask", "255.0.0.0", "127.0.0.1", "metric", "1"); err != nil {
+		log.Warn("autoroute: add localhost route", "err", err)
+	} else {
+		cleanups = append(cleanups, func() {
+			if err := run("route", "delete", "127.0.0.0", "mask", "255.0.0.0", "127.0.0.1"); err != nil {
+				log.Warn("autoroute: remove localhost route", "err", err)
 			}
 		})
 	}
@@ -186,11 +198,8 @@ func defaultWindowsGateway4() (string, error) {
 	// This works regardless of section header language:
 	//   Network Destination  Netmask      Gateway      Interface  Metric
 	//         0.0.0.0        0.0.0.0   192.168.1.1  192.168.1.10    35
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "0.0.0.0" && fields[1] == "0.0.0.0" {
-			return fields[2], nil
-		}
+	if gw := parseDefaultGatewayFromRoutePrint(string(out)); gw != "" {
+		return gw, nil
 	}
 	return "", fmt.Errorf("no default route found (tried PowerShell Get-NetRoute and route print)")
 }
