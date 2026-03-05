@@ -275,7 +275,7 @@ func removeLocalhostRoutePS() error {
 	)
 	script := "Remove-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
 		"-NextHop " + psQuote(nextHopOnLink) + " " +
-		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction SilentlyContinue"
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
 	return runPowerShell(script)
 }
 
