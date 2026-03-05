@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"encoding/binary"
+	"io"
 	"log/slog"
 	"net/netip"
 	"time"
@@ -71,5 +73,76 @@ func (r *DNSRelay) Handle(conn adapter.UDPConn) {
 	conn.SetWriteDeadline(time.Now().Add(dnsReadTimeout))
 	if _, err := conn.Write(resp[:m]); err != nil {
 		r.log.Debug("dns relay: write response to client", "err", err)
+	}
+}
+
+// HandleTCP processes one DNS query over a TCP connection (DNS-over-TCP).
+// DNS over TCP frames each message with a 2-byte big-endian length prefix.
+// The conn is always closed when HandleTCP returns.
+func (r *DNSRelay) HandleTCP(conn adapter.TCPConn) {
+	defer conn.Close()
+
+	// --- read the 2-byte length prefix from the client ---
+	conn.SetReadDeadline(time.Now().Add(dnsReadTimeout))
+	var lenBuf [2]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		r.log.Debug("dns relay tcp: read length prefix", "err", err)
+		return
+	}
+	msgLen := int(binary.BigEndian.Uint16(lenBuf[:]))
+	if msgLen == 0 || msgLen > dnsBufSize {
+		r.log.Debug("dns relay tcp: invalid message length", "len", msgLen)
+		return
+	}
+
+	// --- read the DNS query ---
+	query := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, query); err != nil {
+		r.log.Debug("dns relay tcp: read query", "err", err)
+		return
+	}
+
+	// --- forward to upstream DNS via TCP, bypassing the tunnel ---
+	upConn, err := markDialer().Dial("tcp", r.upstream.String())
+	if err != nil {
+		r.log.Debug("dns relay tcp: dial upstream", "upstream", r.upstream, "err", err)
+		return
+	}
+	defer upConn.Close()
+	upConn.SetDeadline(time.Now().Add(dnsForwardTimeout))
+
+	// Write length-prefixed query to upstream.
+	wire := make([]byte, 2+msgLen)
+	binary.BigEndian.PutUint16(wire[:2], uint16(msgLen))
+	copy(wire[2:], query)
+	if _, err := upConn.Write(wire); err != nil {
+		r.log.Debug("dns relay tcp: write query to upstream", "err", err)
+		return
+	}
+
+	// --- read the length-prefixed response from upstream ---
+	var respLenBuf [2]byte
+	if _, err := io.ReadFull(upConn, respLenBuf[:]); err != nil {
+		r.log.Debug("dns relay tcp: read response length", "err", err)
+		return
+	}
+	respLen := int(binary.BigEndian.Uint16(respLenBuf[:]))
+	if respLen == 0 || respLen > dnsBufSize {
+		r.log.Debug("dns relay tcp: invalid response length", "len", respLen)
+		return
+	}
+	resp := make([]byte, respLen)
+	if _, err := io.ReadFull(upConn, resp); err != nil {
+		r.log.Debug("dns relay tcp: read response", "err", err)
+		return
+	}
+
+	// --- write the length-prefixed response back to the client ---
+	conn.SetWriteDeadline(time.Now().Add(dnsReadTimeout))
+	respWire := make([]byte, 2+respLen)
+	binary.BigEndian.PutUint16(respWire[:2], uint16(respLen))
+	copy(respWire[2:], resp)
+	if _, err := conn.Write(respWire); err != nil {
+		r.log.Debug("dns relay tcp: write response to client", "err", err)
 	}
 }
