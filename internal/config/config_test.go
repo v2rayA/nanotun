@@ -37,7 +37,7 @@ func TestFinalizeLogDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finalize default failed: %v", err)
 	}
-	if def.LogDir != "logs" {
-		t.Fatalf("expected default logDir logs, got %q", def.LogDir)
+	if def.LogDir != Default().LogDir {
+		t.Fatalf("expected default logDir %q, got %q", Default().LogDir, def.LogDir)
 	}
 }
