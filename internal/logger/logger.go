@@ -24,10 +24,19 @@ const (
 
 // Setup configures the global slog logger according to the requested level.
 func Setup(level string) *slog.Logger {
+	return SetupWithDir(level, "")
+}
+
+// SetupWithDir configures the global slog logger according to the requested
+// level and log directory.
+func SetupWithDir(level, logDir string) *slog.Logger {
 	lvl := parseLevel(level)
 	out := io.Writer(os.Stderr)
+	if strings.TrimSpace(logDir) == "" {
+		logDir = defaultLogDir
+	}
 
-	if w, closer, err := newRotatingFileWriter(defaultLogDir, defaultLogPrefix, defaultMaxFileSize, defaultMaxAge, time.Now); err == nil {
+	if w, closer, err := newRotatingFileWriter(logDir, defaultLogPrefix, defaultMaxFileSize, defaultMaxAge, time.Now); err == nil {
 		fileCloserMu.Lock()
 		if fileCloser != nil {
 			_ = fileCloser.Close()

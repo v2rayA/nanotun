@@ -21,7 +21,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := logger.Setup(runtimeCfg.LogLevel)
+	log := logger.SetupWithDir(runtimeCfg.LogLevel, runtimeCfg.LogDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -47,6 +47,7 @@ func loadRuntimeConfig() (config.Runtime, error) {
 	excludeRefresh := fs.Duration("exclude-refresh", 0, "Process table refresh interval")
 	excludeIPs := fs.StringArray("exclude-ip", nil, "CIDR prefix or IP to route directly (bypass proxy); repeatable")
 	logLevel := fs.String("log-level", "", "Log level: debug|info|warn|error")
+	logDir := fs.String("log-dir", "", "Directory for log files (default: ./logs)")
 
 	_ = fs.Parse(os.Args[1:])
 
@@ -90,6 +91,9 @@ func loadRuntimeConfig() (config.Runtime, error) {
 	}
 	if fs.Changed("log-level") {
 		overrides.LogLevel = *logLevel
+	}
+	if fs.Changed("log-dir") {
+		overrides.LogDir = *logDir
 	}
 
 	base.Merge(overrides)

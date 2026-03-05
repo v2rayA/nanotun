@@ -181,7 +181,7 @@ func defaultWindowsGateway4() (string, error) {
 	psScript := `(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | ` +
 		`Sort-Object RouteMetric | Select-Object -First 1).NextHop`
 	if out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive",
-		"-Command", psScript).Output(); err == nil {
+		"-Command", withPowerShellUnicode(psScript)).Output(); err == nil {
 		gw := strings.TrimSpace(string(out))
 		if gw != "" && gw != "::" {
 			return gw, nil
@@ -242,7 +242,7 @@ func run(name string, args ...string) error {
 }
 
 func runPowerShell(script string) error {
-	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", withPowerShellUnicode(script))
 }
 
 func psQuote(s string) string {

@@ -87,6 +87,9 @@ excludeRefresh: 15s
 # Verbosity level: debug | info | warn | error
 logLevel: info
 
+# Directory for log files (relative paths are resolved from current working dir).
+logDir: logs
+
 # nanotun also writes logs to ./logs by default:
 # - Date-based files (nanotun-YYYY-MM-DD*.log)
 # - 1MB max per file (automatic rotation)

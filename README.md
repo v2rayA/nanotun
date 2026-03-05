@@ -112,6 +112,7 @@ Both addresses are fixed. After nanotun starts:
 | `--exclude` | Process name to bypass (repeatable). |
 | `--exclude-refresh` | Interval for refreshing the process table. |
 | `--log-level` | `debug`, `info`, `warn`, or `error`. |
+| `--log-dir` | Directory for file logs (default `./logs`). |
 
 By default, nanotun writes logs to both stderr and `./logs`:
 - file pattern: `nanotun-YYYY-MM-DD.log` (and `*.N.log` after size rotation)
@@ -135,6 +136,7 @@ The YAML schema handled by [internal/config/config.go](internal/config/config.go
 | `excludedProcesses` | *(none)* | Lower-cased executables that should never transit the proxy. |
 | `excludeRefresh` | `15s` | Scan interval for process table refresh. |
 | `logLevel` | `info` | `debug` / `info` / `warn` / `error`. |
+| `logDir` | `logs` | Directory for rotating date-based log files. |
 
 ## Built-in Gateway
 nanotun runs a virtual gateway on the TUN interface's first address:
