@@ -236,7 +236,7 @@ func resolveProxyHost(proxyAddr string, log *slog.Logger) []string {
 func run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s %v: %s", name, args, out)
+		return fmt.Errorf("%s %v: %v: %s", name, args, err, out)
 	}
 	return nil
 }
@@ -245,15 +245,8 @@ func runPowerShell(script string) error {
 	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", withPowerShellUnicode(script))
 }
 
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
 func addIPv4HostRoutePS(ip, nextHop string) error {
-	script := "New-NetRoute -AddressFamily IPv4 " +
-		"-DestinationPrefix " + psQuote(ip+"/32") + " " +
-		"-NextHop " + psQuote(nextHop) + " " +
-		"-RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop"
+	script := buildAddIPv4HostRouteScript(ip, nextHop)
 	return runPowerShell(script)
 }
 
@@ -271,10 +264,7 @@ func addLocalhostRoutePS() error {
 		loopbackPrefix = "127.0.0.0/8"
 		nextHopOnLink  = "0.0.0.0"
 	)
-	script := "$ifIndex = (Get-NetIPAddress -AddressFamily IPv4 -IPAddress " + psQuote(loopbackAddr) + " -ErrorAction Stop | " +
-		"Select-Object -First 1).InterfaceIndex; " +
-		"New-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
-		"-InterfaceIndex $ifIndex -NextHop " + psQuote(nextHopOnLink) + " -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop"
+	script := buildAddLocalhostRouteScript(loopbackAddr, loopbackPrefix, nextHopOnLink)
 	return runPowerShell(script)
 }
 
@@ -285,7 +275,7 @@ func removeLocalhostRoutePS() error {
 	)
 	script := "Remove-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
 		"-NextHop " + psQuote(nextHopOnLink) + " " +
-		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction SilentlyContinue"
 	return runPowerShell(script)
 }
 
