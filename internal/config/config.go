@@ -39,6 +39,7 @@ type Config struct {
 	// always bypassed regardless of this list.
 	ExcludedIPs []string `yaml:"excludedIPs" json:"excludedIPs"`
 	LogLevel    string   `yaml:"logLevel" json:"logLevel"`
+	LogDir      string   `yaml:"logDir" json:"logDir"`
 	// AutoDefaultRoute, when true, causes nanotun to automatically install
 	// OS-level default routes and DNS redirect rules at startup and remove
 	// them cleanly on exit.
@@ -60,6 +61,7 @@ type Runtime struct {
 	// ExcludedIPs are the validated prefix form of Config.ExcludedIPs.
 	ExcludedIPs      []netip.Prefix
 	LogLevel         string
+	LogDir           string
 	AutoDefaultRoute bool
 }
 
@@ -72,6 +74,7 @@ func Default() Config {
 		UDPTimeout:     time.Minute,
 		ExcludeRefresh: 15 * time.Second,
 		LogLevel:       "info",
+		LogDir:         "logs",
 	}
 }
 
@@ -123,6 +126,9 @@ func (c *Config) Merge(override Config) {
 	if override.LogLevel != "" {
 		c.LogLevel = override.LogLevel
 	}
+	if override.LogDir != "" {
+		c.LogDir = override.LogDir
+	}
 	if override.AutoDefaultRoute {
 		c.AutoDefaultRoute = true
 	}
@@ -157,6 +163,7 @@ func (c Config) Finalize() (Runtime, error) {
 		ExcludeRefresh:    base.ExcludeRefresh,
 		ExcludedIPs:       excludedPrefixes,
 		LogLevel:          base.LogLevel,
+		LogDir:            base.LogDir,
 		AutoDefaultRoute:  base.AutoDefaultRoute,
 	}
 

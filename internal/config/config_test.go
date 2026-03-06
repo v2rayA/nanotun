@@ -23,3 +23,21 @@ func TestNormalizeProcessNameTrimsWhitespace(t *testing.T) {
 		t.Fatalf("expected whitespace and suffix trimmed")
 	}
 }
+
+func TestFinalizeLogDir(t *testing.T) {
+	run, err := (Config{Proxy: "direct://", LogDir: "/tmp/nanotun-logs"}).Finalize()
+	if err != nil {
+		t.Fatalf("finalize failed: %v", err)
+	}
+	if run.LogDir != "/tmp/nanotun-logs" {
+		t.Fatalf("expected custom logDir, got %q", run.LogDir)
+	}
+
+	def, err := (Config{Proxy: "direct://"}).Finalize()
+	if err != nil {
+		t.Fatalf("finalize default failed: %v", err)
+	}
+	if def.LogDir != Default().LogDir {
+		t.Fatalf("expected default logDir %q, got %q", Default().LogDir, def.LogDir)
+	}
+}

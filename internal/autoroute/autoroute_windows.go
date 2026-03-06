@@ -45,18 +45,29 @@ func Apply(tunName, proxyAddr string, log *slog.Logger) (func(), error) {
 	log.Debug("autoroute: original gateway", "gw4", origGW4)
 
 	// ── Add bypass routes for the proxy server BEFORE touching the default ─
-	// route.exe is used here so we don't need to know the interface name.
 	proxyIPs := resolveProxyHost(proxyAddr, log)
 	for _, ip := range proxyIPs {
-		if err := run("route", "add", ip, "mask", "255.255.255.255", origGW4); err != nil {
+		if err := addIPv4HostRoutePS(ip, origGW4); err != nil {
 			log.Warn("autoroute: add proxy bypass route", "ip", ip, "err", err)
 			continue
 		}
 		log.Info("autoroute: proxy bypass route added", "ip", ip, "via", origGW4)
 		ipCopy := ip
 		cleanups = append(cleanups, func() {
-			if err := run("route", "delete", ipCopy, "mask", "255.255.255.255"); err != nil {
+			if err := removeIPv4HostRoutePS(ipCopy, origGW4); err != nil {
 				log.Warn("autoroute: remove proxy bypass route", "ip", ipCopy, "err", err)
+			}
+		})
+	}
+
+	// Ensure local loopback keeps the most specific route while tunnel is active.
+	// This prevents localhost traffic from being caught by the split default routes.
+	if err := addLocalhostRoutePS(); err != nil {
+		log.Warn("autoroute: add localhost route", "err", err)
+	} else {
+		cleanups = append(cleanups, func() {
+			if err := removeLocalhostRoutePS(); err != nil {
+				log.Warn("autoroute: remove localhost route", "err", err)
 			}
 		})
 	}
@@ -170,7 +181,7 @@ func defaultWindowsGateway4() (string, error) {
 	psScript := `(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | ` +
 		`Sort-Object RouteMetric | Select-Object -First 1).NextHop`
 	if out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive",
-		"-Command", psScript).Output(); err == nil {
+		"-Command", withPowerShellUnicode(psScript)).Output(); err == nil {
 		gw := strings.TrimSpace(string(out))
 		if gw != "" && gw != "::" {
 			return gw, nil
@@ -186,11 +197,8 @@ func defaultWindowsGateway4() (string, error) {
 	// This works regardless of section header language:
 	//   Network Destination  Netmask      Gateway      Interface  Metric
 	//         0.0.0.0        0.0.0.0   192.168.1.1  192.168.1.10    35
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "0.0.0.0" && fields[1] == "0.0.0.0" {
-			return fields[2], nil
-		}
+	if gw := parseDefaultGatewayFromRoutePrint(string(out)); gw != "" {
+		return gw, nil
 	}
 	return "", fmt.Errorf("no default route found (tried PowerShell Get-NetRoute and route print)")
 }
@@ -228,9 +236,47 @@ func resolveProxyHost(proxyAddr string, log *slog.Logger) []string {
 func run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s %v: %s", name, args, out)
+		return fmt.Errorf("%s %v: %v: %s", name, args, err, out)
 	}
 	return nil
+}
+
+func runPowerShell(script string) error {
+	return run("powershell", "-NoProfile", "-NonInteractive", "-Command", withPowerShellUnicode(script))
+}
+
+func addIPv4HostRoutePS(ip, nextHop string) error {
+	script := buildAddIPv4HostRouteScript(ip, nextHop)
+	return runPowerShell(script)
+}
+
+func removeIPv4HostRoutePS(ip, nextHop string) error {
+	script := "Remove-NetRoute -AddressFamily IPv4 " +
+		"-DestinationPrefix " + psQuote(ip+"/32") + " " +
+		"-NextHop " + psQuote(nextHop) + " " +
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
+	return runPowerShell(script)
+}
+
+func addLocalhostRoutePS() error {
+	const (
+		loopbackAddr   = "127.0.0.1"
+		loopbackPrefix = "127.0.0.0/8"
+		nextHopOnLink  = "0.0.0.0"
+	)
+	script := buildAddLocalhostRouteScript(loopbackAddr, loopbackPrefix, nextHopOnLink)
+	return runPowerShell(script)
+}
+
+func removeLocalhostRoutePS() error {
+	const (
+		loopbackPrefix = "127.0.0.0/8"
+		nextHopOnLink  = "0.0.0.0"
+	)
+	script := "Remove-NetRoute -AddressFamily IPv4 -DestinationPrefix " + psQuote(loopbackPrefix) + " " +
+		"-NextHop " + psQuote(nextHopOnLink) + " " +
+		"-PolicyStore ActiveStore -Confirm:$false -ErrorAction Stop"
+	return runPowerShell(script)
 }
 
 func nop() {}
